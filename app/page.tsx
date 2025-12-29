@@ -23,7 +23,7 @@ export default function Page() {
   const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<string[]>([]);
-  const [intervalSec, setIntervalSec] = useState(15);
+  const [intervalSec, setIntervalSec] = useState(5);
 
   const seenRef = useRef<Record<string, Record<string, true>>>({});
   const timerRef = useRef<number | null>(null);
@@ -35,7 +35,7 @@ export default function Page() {
   }, [wallets]);
 
   function pushLog(line: string) {
-    setLog((prev) => [line, ...prev].slice(0, 120));
+    setLog((prev) => [line, ...prev].slice(0, 150));
   }
 
   async function loadWallets() {
@@ -76,13 +76,13 @@ export default function Page() {
   }
 
   async function primeSeen() {
-    pushLog("… Priming recent BUY trades (prevents spam on start)");
     for (const w of wallets) {
       const wallet = w.wallet.toLowerCase();
       try {
-        const res = await fetch(`/api/trades?user=${encodeURIComponent(wallet)}&limit=10`, {
-          cache: "no-store"
-        });
+        const res = await fetch(
+          `/api/trades?user=${encodeURIComponent(wallet)}&limit=10`,
+          { cache: "no-store" }
+        );
         const data = await res.json();
         const trades: Trade[] = data.trades ?? [];
         seenRef.current[wallet] ||= {};
@@ -92,50 +92,67 @@ export default function Page() {
         }
       } catch {}
     }
-    pushLog("✅ Primed");
+    pushLog("✅ Primed recent trades");
   }
 
   async function pollOnce() {
-    for (const w of wallets) {
-      const wallet = w.wallet.toLowerCase();
-      try {
-        const res = await fetch(`/api/trades?user=${encodeURIComponent(wallet)}&limit=10`, {
-          cache: "no-store"
-        });
-        const data = await res.json();
-        if (data.error) {
-          pushLog(`❌ Trades error for ${w.name}: ${data.error}`);
-          continue;
-        }
+    if (!wallets.length) return;
 
-        const trades: Trade[] = data.trades ?? [];
-        for (const t of trades) {
-          if (t.side !== "BUY") continue;
+    const CONCURRENCY = 12;
 
-          const k = keyForTrade(t);
-          seenRef.current[wallet] ||= {};
-          if (seenRef.current[wallet][k]) continue;
-          seenRef.current[wallet][k] = true;
+    const list = wallets.map((w) => ({
+      name: w.name,
+      wallet: w.wallet.toLowerCase()
+    }));
 
-          const whoWallet = (t.proxyWallet ?? wallet).toLowerCase();
-          const traderName = walletMap[whoWallet] ?? w.name;
+    for (let i = 0; i < list.length; i += CONCURRENCY) {
+      const batch = list.slice(i, i + CONCURRENCY);
 
-          const shares = Number(t.size);
-          const marketTitle = t.title;
-          const outcome = t.outcome ? ` (${t.outcome})` : "";
+      await Promise.all(
+        batch.map(async (w) => {
+          try {
+            const res = await fetch(
+              `/api/trades?user=${encodeURIComponent(w.wallet)}&limit=10`,
+              { cache: "no-store" }
+            );
 
-          const sentence = `${traderName} bought ${shares} shares of ${marketTitle}${outcome}.`;
-          pushLog(`🔔 ${sentence}`);
-          beep();
-          speak(sentence);
+            const data = await res.json();
+            if (data.error) {
+              pushLog(`❌ Trades error for ${w.name}: ${data.error}`);
+              return;
+            }
 
-          if (Notification.permission === "granted") {
-            new Notification("Polymarket Trade Alert", { body: sentence });
+            const trades: Trade[] = data.trades ?? [];
+            for (const t of trades) {
+              if (t.side !== "BUY") continue;
+
+              const k = keyForTrade(t);
+              seenRef.current[w.wallet] ||= {};
+              if (seenRef.current[w.wallet][k]) continue;
+              seenRef.current[w.wallet][k] = true;
+
+              const whoWallet = (t.proxyWallet ?? w.wallet).toLowerCase();
+              const traderName = walletMap[whoWallet] ?? w.name;
+
+              const shares = Number(t.size);
+              const marketTitle = t.title;
+              const outcome = t.outcome ? ` (${t.outcome})` : "";
+
+              const sentence = `${traderName} bought ${shares} shares of ${marketTitle}${outcome}.`;
+
+              pushLog(`🔔 ${sentence}`);
+              beep();
+              speak(sentence);
+
+              if (Notification.permission === "granted") {
+                new Notification("Polymarket Trade Alert", { body: sentence });
+              }
+            }
+          } catch (e: any) {
+            pushLog(`❌ Poll error for ${w.name}: ${String(e?.message ?? e)}`);
           }
-        }
-      } catch (e: any) {
-        pushLog(`❌ Poll error for ${w.name}: ${String(e?.message ?? e)}`);
-      }
+        })
+      );
     }
   }
 
@@ -171,10 +188,8 @@ export default function Page() {
 
   return (
     <main style={{ fontFamily: "system-ui", padding: 20, maxWidth: 900 }}>
-      <h1 style={{ marginBottom: 6 }}>Polymarket Wallet Tracker (Voice Alerts)</h1>
-      <p style={{ marginTop: 0, opacity: 0.75 }}>
-        Leave this page open while you work. Click Start Tracking.
-      </p>
+      <h1>Polymarket Wallet Tracker (FAST)</h1>
+      <p>Leave this tab open. Audio + voice alerts for BUY trades.</p>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <button onClick={enableNotifications}>Enable Notifications</button>
@@ -185,8 +200,8 @@ export default function Page() {
         )}
         <button onClick={loadWallets}>Reload Wallet List</button>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          Poll every
+        <label>
+          Poll every{" "}
           <input
             type="number"
             min={5}
@@ -194,12 +209,12 @@ export default function Page() {
             onChange={(e) => setIntervalSec(Number(e.target.value))}
             style={{ width: 70 }}
             disabled={running}
-          />
+          />{" "}
           sec
         </label>
       </div>
 
-      <h3 style={{ marginBottom: 6 }}>Wallets (from Google Sheet)</h3>
+      <h3>Wallets</h3>
       <ul>
         {wallets.map((w) => (
           <li key={w.wallet}>
@@ -208,7 +223,7 @@ export default function Page() {
         ))}
       </ul>
 
-      <h3 style={{ marginBottom: 6 }}>Live Log</h3>
+      <h3>Live Log</h3>
       <div
         style={{
           border: "1px solid #ddd",
@@ -222,11 +237,6 @@ export default function Page() {
       >
         {log.length ? log.join("\n") : "No events yet."}
       </div>
-
-      <p style={{ marginTop: 14, opacity: 0.7 }}>
-        Note: browsers may mute audio if the tab is totally backgrounded. Best setup:
-        keep this tab visible in a small window, or install it as an app (Chrome ⋮ → Install).
-      </p>
     </main>
   );
 }
