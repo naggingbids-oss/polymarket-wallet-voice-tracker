@@ -1,6 +1,8 @@
+import "./globals.css";
+
 export const metadata = {
   title: "Polymarket Wallet Voice Tracker",
-  description: "Voice alerts for tracked Polymarket wallets"
+  description: "Voice + text alerts for tracked Polymarket wallets"
 };
 
 export default function RootLayout({
@@ -9,8 +11,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body style={{ margin: 0 }}>{children}</body>
+    <html lang="en" className="dark">
+      <body>{children}</body>
     </html>
   );
 }
