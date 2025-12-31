@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type WalletRow = { name: string; wallet: string };
 
 type Trade = {
   proxyWallet?: string;
   side: "BUY" | "SELL";
-  size: number; // shares
-  price: number; // USD per share (usually 0-1)
+  size: number;
+  price: number;
   timestamp: number;
   title: string;
   outcome?: string; // "Yes" / "No" sometimes
@@ -18,7 +23,6 @@ type Trade = {
 type LogItem = {
   id: string;
   side: "BUY" | "SELL";
-  text: string;
   traderName: string;
   shares: number;
   price: number;
@@ -37,62 +41,45 @@ function fmtUsd(x: number) {
   return `$${x.toFixed(2)}`;
 }
 
-function fmtPricePerShare(price: number) {
-  if (!Number.isFinite(price)) return "$0.00";
-  if (price < 1) return `${Math.round(price * 100)}¢`;
-  return `$${price.toFixed(2)}`;
-}
-
 function fmtShares(n: number) {
   if (!Number.isFinite(n)) return "0";
   return n % 1 === 0 ? String(n) : n.toFixed(2);
 }
 
-function ColoredWord({
-  side,
-  children,
-}: {
-  side: "BUY" | "SELL";
-  children: React.ReactNode;
-}) {
-  const color = side === "BUY" ? "#3ee281" : "#ff5a6a";
-  return <span style={{ color, fontWeight: 800 }}>{children}</span>;
+function fmtPricePerShare(price: number) {
+  if (!Number.isFinite(price)) return "$0.00";
+  // Polymarket often < $1; show cents cleanly
+  if (price > 0 && price < 1) return `${Math.round(price * 100)}¢`;
+  return `$${price.toFixed(2)}`;
 }
 
-function OutcomeWord({ outcome }: { outcome?: string }) {
-  if (!outcome) return null;
+function Verb({ side }: { side: "BUY" | "SELL" }) {
+  return (
+    <span className={side === "BUY" ? "text-emerald-300 font-semibold" : "text-red-300 font-semibold"}>
+      {side === "BUY" ? "bought" : "sold"}
+    </span>
+  );
+}
 
-  const normalized = outcome.trim().toLowerCase();
-  if (normalized === "yes") {
-    return <span style={{ color: "#3ee281", fontWeight: 800 }}>Yes</span>;
-  }
-  if (normalized === "no") {
-    return <span style={{ color: "#ff5a6a", fontWeight: 800 }}>No</span>;
-  }
-  return <span style={{ opacity: 0.9, fontWeight: 700 }}>{outcome}</span>;
+function Outcome({ outcome }: { outcome?: string }) {
+  if (!outcome) return null;
+  const o = outcome.trim().toLowerCase();
+  if (o === "yes") return <span className="text-emerald-300 font-semibold">Yes</span>;
+  if (o === "no") return <span className="text-red-300 font-semibold">No</span>;
+  return <span className="text-foreground font-semibold">{outcome}</span>;
 }
 
 export default function Page() {
   const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [running, setRunning] = useState(false);
-
-  // left-side structured log
   const [logItems, setLogItems] = useState<LogItem[]>([]);
-
-  // banner at top-right area
   const [banner, setBanner] = useState<LogItem | null>(null);
 
-  // track BUY/SELL/BOTH
   const [trackMode, setTrackMode] = useState<"BUY" | "SELL" | "BOTH">("BOTH");
-
-  // min $ filter
   const [minFilterEnabled, setMinFilterEnabled] = useState(true);
   const [minUsd, setMinUsd] = useState(500);
 
-  // seen trades
   const seenRef = useRef<Record<string, Record<string, true>>>({});
-
-  // adaptive polling (fast but safe)
   const delayMsRef = useRef<number>(2500);
   const stopRef = useRef<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
@@ -103,7 +90,7 @@ export default function Page() {
     return m;
   }, [wallets]);
 
-  function addLogItem(item: LogItem) {
+  function addLog(item: LogItem) {
     setLogItems((prev) => [item, ...prev].slice(0, 250));
   }
 
@@ -122,47 +109,41 @@ export default function Page() {
     const res = await fetch("/api/wallets", { cache: "no-store" });
     const data = await res.json();
     if (data.error) {
-      addLogItem({
-        id: `err:${Date.now()}`,
+      addLog({
+        id: `sys-err:${Date.now()}`,
         side: "SELL",
-        text: `Wallet load error: ${data.error}`,
         traderName: "System",
         shares: 0,
         price: 0,
         notional: 0,
-        marketTitle: "",
-        timeMs: Date.now(),
+        marketTitle: `Wallet load error: ${data.error}`,
+        timeMs: Date.now()
       });
       return;
     }
     setWallets(data.wallets ?? []);
-    addLogItem({
+    addLog({
       id: `sys:${Date.now()}`,
       side: "BUY",
-      text: `Loaded ${data.wallets?.length ?? 0} wallets from your Google Sheet.`,
       traderName: "System",
       shares: 0,
       price: 0,
       notional: 0,
-      marketTitle: "",
-      timeMs: Date.now(),
+      marketTitle: `Loaded ${data.wallets?.length ?? 0} wallets from your Google Sheet.`,
+      timeMs: Date.now()
     });
   }
 
   function beep(side: "BUY" | "SELL") {
-    // tiny cue (different pitch)
-    const AudioCtx =
-      (window as any).AudioContext || (window as any).webkitAudioContext;
+    const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
     const ctx = new AudioCtx();
     const o = ctx.createOscillator();
     const g = ctx.createGain();
-
     o.type = "sine";
     o.frequency.value = side === "BUY" ? 920 : 520;
     o.connect(g);
     g.connect(ctx.destination);
     g.gain.value = 0.08;
-
     o.start();
     setTimeout(() => {
       o.stop();
@@ -172,21 +153,19 @@ export default function Page() {
 
   function speak(sentence: string) {
     const u = new SpeechSynthesisUtterance(sentence);
-    u.rate = 1.15; // slightly faster (your request)
+    u.rate = 1.18; // slightly faster
     u.pitch = 1.0;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(u);
   }
 
   async function primeSeen() {
-    // mark recent trades as seen so Start doesn't spam
     for (const w of wallets) {
       const wallet = w.wallet.toLowerCase();
       try {
-        const res = await fetch(
-          `/api/trades?user=${encodeURIComponent(wallet)}&limit=10`,
-          { cache: "no-store" }
-        );
+        const res = await fetch(`/api/trades?user=${encodeURIComponent(wallet)}&limit=10`, {
+          cache: "no-store"
+        });
         const data = await res.json();
         const trades: Trade[] = data.trades ?? [];
         seenRef.current[wallet] ||= {};
@@ -195,16 +174,15 @@ export default function Page() {
         }
       } catch {}
     }
-    addLogItem({
-      id: `sys:prime:${Date.now()}`,
+    addLog({
+      id: `sys-prime:${Date.now()}`,
       side: "BUY",
-      text: "Primed recent trades (prevents announcing old activity on start).",
       traderName: "System",
       shares: 0,
       price: 0,
       notional: 0,
-      marketTitle: "",
-      timeMs: Date.now(),
+      marketTitle: "Primed recent trades (prevents announcing old activity on start).",
+      timeMs: Date.now()
     });
   }
 
@@ -216,11 +194,7 @@ export default function Page() {
     let throttled = false;
 
     const CONCURRENCY = 10;
-
-    const list = wallets.map((w) => ({
-      name: w.name,
-      wallet: w.wallet.toLowerCase(),
-    }));
+    const list = wallets.map((w) => ({ name: w.name, wallet: w.wallet.toLowerCase() }));
 
     try {
       for (let i = 0; i < list.length; i += CONCURRENCY) {
@@ -229,45 +203,18 @@ export default function Page() {
         await Promise.all(
           batch.map(async (w) => {
             try {
-              const res = await fetch(
-                `/api/trades?user=${encodeURIComponent(w.wallet)}&limit=10`,
-                { cache: "no-store" }
-              );
+              const res = await fetch(`/api/trades?user=${encodeURIComponent(w.wallet)}&limit=10`, {
+                cache: "no-store"
+              });
 
               if (!res.ok) {
                 if (res.status === 429 || res.status === 403) throttled = true;
-                addLogItem({
-                  id: `api:${w.wallet}:${Date.now()}`,
-                  side: "SELL",
-                  text: `API status ${res.status} for ${w.name}`,
-                  traderName: w.name,
-                  shares: 0,
-                  price: 0,
-                  notional: 0,
-                  marketTitle: "",
-                  timeMs: Date.now(),
-                });
                 return;
               }
 
               const data = await res.json();
-              if (data.error) {
-                throttled = true;
-                addLogItem({
-                  id: `err:${w.wallet}:${Date.now()}`,
-                  side: "SELL",
-                  text: `Trades error for ${w.name}: ${data.error}`,
-                  traderName: w.name,
-                  shares: 0,
-                  price: 0,
-                  notional: 0,
-                  marketTitle: "",
-                  timeMs: Date.now(),
-                });
-                return;
-              }
-
               const trades: Trade[] = data.trades ?? [];
+
               for (const t of trades) {
                 if (!shouldTrackSide(t.side)) continue;
                 if (!passesMinUsdFilter(t)) continue;
@@ -284,55 +231,37 @@ export default function Page() {
                 const price = Number(t.price);
                 const notional = shares * price;
 
-                const verb = t.side === "BUY" ? "bought" : "sold";
-                const sentence = `${traderName} ${verb} ${fmtShares(shares)} shares at ${fmtPricePerShare(
-                  price
-                )} per share of ${t.title}${t.outcome ? ` (${t.outcome})` : ""}.`;
-
-                const dot = t.side === "BUY" ? "🟢" : "🔴";
-                const text = `${dot} ${traderName} ${verb} ${fmtShares(
-                  shares
-                )} shares @ ${fmtPricePerShare(price)}/share — ${t.title}${
-                  t.outcome ? ` (${t.outcome})` : ""
-                } — ~${fmtUsd(notional)}`;
-
                 const item: LogItem = {
                   id: `${w.wallet}:${k}`,
                   side: t.side,
-                  text,
                   traderName,
                   shares,
                   price,
                   notional,
                   marketTitle: t.title,
                   outcome: t.outcome,
-                  timeMs: Date.now(),
+                  timeMs: Date.now()
                 };
 
-                addLogItem(item);
+                addLog(item);
                 setBanner(item);
 
-                // alerting
+                const verb = t.side === "BUY" ? "bought" : "sold";
+                const sentence = `${traderName} ${verb} ${fmtShares(shares)} shares at ${fmtPricePerShare(
+                  price
+                )} per share of ${t.title}${t.outcome ? ` (${t.outcome})` : ""}.`;
+
                 beep(t.side);
                 speak(sentence);
 
                 if (Notification.permission === "granted") {
-                  new Notification("Polymarket Trade Alert", { body: text });
+                  const dot = t.side === "BUY" ? "🟢" : "🔴";
+                  const msg = `${dot} ${traderName} ${verb} ${fmtShares(shares)} @ ${fmtPricePerShare(price)}/share — ${t.title}`;
+                  new Notification("Polymarket Trade Alert", { body: msg });
                 }
               }
-            } catch (e: any) {
+            } catch {
               throttled = true;
-              addLogItem({
-                id: `pollerr:${w.wallet}:${Date.now()}`,
-                side: "SELL",
-                text: `Poll error for ${w.name}: ${String(e?.message ?? e)}`,
-                traderName: w.name,
-                shares: 0,
-                price: 0,
-                notional: 0,
-                marketTitle: "",
-                timeMs: Date.now(),
-              });
             }
           })
         );
@@ -350,12 +279,8 @@ export default function Page() {
     while (!stopRef.current) {
       const { throttled } = await pollOnce();
 
-      // Adaptive delay: back off on throttling, otherwise gently speed up
-      if (throttled) {
-        delayMsRef.current = Math.min(delayMsRef.current * 1.5, 20000);
-      } else {
-        delayMsRef.current = Math.max(delayMsRef.current * 0.9, 1400);
-      }
+      if (throttled) delayMsRef.current = Math.min(delayMsRef.current * 1.5, 20000);
+      else delayMsRef.current = Math.max(delayMsRef.current * 0.9, 1400);
 
       await new Promise((r) => setTimeout(r, delayMsRef.current));
     }
@@ -375,18 +300,7 @@ export default function Page() {
   }
 
   async function enableNotifications() {
-    const p = await Notification.requestPermission();
-    addLogItem({
-      id: `notif:${Date.now()}`,
-      side: "BUY",
-      text: `Desktop notifications permission: ${p}`,
-      traderName: "System",
-      shares: 0,
-      price: 0,
-      notional: 0,
-      marketTitle: "",
-      timeMs: Date.now(),
-    });
+    await Notification.requestPermission();
   }
 
   useEffect(() => {
@@ -394,307 +308,199 @@ export default function Page() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const pageStyle: React.CSSProperties = {
-    minHeight: "100vh",
-    background: "#0b0f14",
-    color: "#eaf0f6",
-  };
-
-  const cardStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 14,
-    padding: 14,
-    boxShadow: "0 10px 28px rgba(0,0,0,0.35)",
-  };
-
-  const subtle: React.CSSProperties = { opacity: 0.75 };
-
   return (
-    <div style={pageStyle}>
-      <div style={{ maxWidth: 1200, margin: "0 auto", padding: 18 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-          <h1 style={{ margin: 0, fontSize: 22, letterSpacing: 0.2 }}>
-            Polymarket Wallet Tracker
-          </h1>
-          <div style={subtle}>
-            Voice + text alerts for tracked wallets — auto-speed polling
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto max-w-[1200px] p-5">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-baseline justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-2xl font-semibold tracking-tight">Polymarket Wallet Tracker</div>
+              <div className="text-sm text-muted-foreground">
+                Clean “New York” UI • voice alerts • auto-speed polling • filters
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Current delay: {(delayMsRef.current / 1000).toFixed(1)}s
+            </div>
           </div>
         </div>
 
-        <div style={{ marginTop: 10, ...subtle, lineHeight: 1.45 }}>
-          Keep this page open while you work. When a tracked wallet trades, you’ll get:
-          a sound cue, a spoken sentence (slightly faster), and a clear on-screen log entry
-          showing <b>shares</b>, <b>price per share</b>, and an estimated <b>$ value</b>.
-        </div>
-
-        <div style={{ display: "flex", gap: 14, marginTop: 16 }}>
-          {/* LEFT: Live log */}
-          <div style={{ flex: 1.35, minWidth: 420 }}>
-            <div style={cardStyle}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <h2 style={{ margin: 0, fontSize: 16 }}>Live Log</h2>
-                <div style={{ fontSize: 12, ...subtle }}>
-                  Delay: {(delayMsRef.current / 1000).toFixed(1)}s
-                </div>
-              </div>
-
-              <div style={{ marginTop: 10, height: 520, overflow: "auto", paddingRight: 6 }}>
+        <div className="mt-4 grid gap-4 lg:grid-cols-[1.45fr_1fr]">
+          {/* LEFT: Live Log */}
+          <Card className="overflow-hidden">
+            <CardHeader>
+              <CardTitle>Live Log</CardTitle>
+              <CardDescription>
+                🟢 buys and 🔴 sells. Includes shares, <span className="font-medium">price per share</span>, and est. $.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[560px] overflow-auto pr-1 space-y-3">
                 {logItems.length === 0 ? (
-                  <div style={subtle}>No events yet.</div>
+                  <div className="text-sm text-muted-foreground">No events yet.</div>
                 ) : (
                   logItems.map((it) => {
                     const isBuy = it.side === "BUY";
                     const dot = isBuy ? "🟢" : "🔴";
-                    const verb = isBuy ? "bought" : "sold";
 
                     return (
                       <div
                         key={it.id}
-                        style={{
-                          padding: "10px 10px",
-                          marginBottom: 10,
-                          borderRadius: 12,
-                          border: "1px solid rgba(255,255,255,0.08)",
-                          background: isBuy
-                            ? "rgba(62,226,129,0.06)"
-                            : "rgba(255,90,106,0.06)",
-                        }}
+                        className={[
+                          "rounded-xl border p-3",
+                          isBuy ? "border-emerald-500/20 bg-emerald-500/5" : "border-red-500/20 bg-red-500/5"
+                        ].join(" ")}
                       >
-                        <div style={{ fontSize: 13, lineHeight: 1.4 }}>
-                          <span style={{ marginRight: 8 }}>{dot}</span>
-                          <span style={{ fontWeight: 800 }}>{it.traderName}</span>{" "}
-                          <ColoredWord side={it.side}>{verb}</ColoredWord>{" "}
-                          <span style={{ fontWeight: 800 }}>{fmtShares(it.shares)}</span>{" "}
-                          shares at{" "}
-                          <span style={{ fontWeight: 800 }}>
-                            {fmtPricePerShare(it.price)}
-                          </span>
-                          <span style={{ ...subtle }}> /share</span>{" "}
-                          of{" "}
-                          <span style={{ fontWeight: 800 }}>{it.marketTitle}</span>
+                        <div className="text-sm leading-relaxed">
+                          <span className="mr-2">{dot}</span>
+                          <span className="font-semibold">{it.traderName}</span> <Verb side={it.side} />{" "}
+                          <span className="font-semibold">{fmtShares(it.shares)}</span> shares at{" "}
+                          <span className="font-semibold">{fmtPricePerShare(it.price)}</span>
+                          <span className="text-muted-foreground">/share</span> of{" "}
+                          <span className="font-semibold">{it.marketTitle}</span>
                           {it.outcome ? (
                             <>
                               {" "}
-                              (
-                              <OutcomeWord outcome={it.outcome} />)
+                              (<Outcome outcome={it.outcome} />)
                             </>
                           ) : null}
-                          <span style={{ ...subtle }}>
-                            {" "}
-                            — est. {fmtUsd(it.notional)}
-                          </span>
+                          <span className="text-muted-foreground"> — est. {fmtUsd(it.notional)}</span>
                         </div>
                       </div>
                     );
                   })
                 )}
               </div>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
-          {/* RIGHT: Controls + Wallets */}
-          <div style={{ flex: 1, minWidth: 360 }}>
-            {banner ? (
-              <div style={{ ...cardStyle, marginBottom: 14 }}>
-                <div style={{ fontSize: 12, ...subtle, marginBottom: 6 }}>
-                  Latest alert
+          {/* RIGHT: Controls + Latest + Wallets */}
+          <div className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Controls</CardTitle>
+                <CardDescription>Fast by default. It backs off automatically if throttled.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" onClick={enableNotifications}>
+                    Enable Notifications
+                  </Button>
+                  {!running ? (
+                    <Button onClick={start}>Start Tracking</Button>
+                  ) : (
+                    <Button variant="outline" onClick={stop}>
+                      Stop
+                    </Button>
+                  )}
+                  <Button variant="ghost" onClick={loadWallets}>
+                    Reload Wallet List
+                  </Button>
                 </div>
 
-                <div style={{ fontSize: 14, lineHeight: 1.45 }}>
-                  <span style={{ marginRight: 8 }}>
-                    {banner.side === "BUY" ? "🟢" : "🔴"}
-                  </span>
-                  <span style={{ fontWeight: 900 }}>{banner.traderName}</span>{" "}
-                  <ColoredWord side={banner.side}>
-                    {banner.side === "BUY" ? "bought" : "sold"}
-                  </ColoredWord>{" "}
-                  <span style={{ fontWeight: 900 }}>{fmtShares(banner.shares)}</span>{" "}
-                  shares at{" "}
-                  <span style={{ fontWeight: 900 }}>
-                    {fmtPricePerShare(banner.price)}
-                  </span>
-                  <span style={{ ...subtle }}> /share</span>{" "}
-                  of <span style={{ fontWeight: 900 }}>{banner.marketTitle}</span>
-                  {banner.outcome ? (
-                    <>
-                      {" "}
-                      (
-                      <OutcomeWord outcome={banner.outcome} />)
-                    </>
-                  ) : null}
-                  <span style={{ ...subtle }}>
-                    {" "}
-                    — est. {fmtUsd(banner.notional)}
-                  </span>
-                </div>
-              </div>
-            ) : null}
+                <div className="grid gap-3">
+                  <div className="grid gap-2">
+                    <div className="text-sm text-muted-foreground">Track mode</div>
+                    <Select
+                      value={trackMode}
+                      onValueChange={(v) => setTrackMode(v as any)}
+                      disabled={running}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="BOTH">Buy + Sell</SelectItem>
+                        <SelectItem value="BUY">Buy only</SelectItem>
+                        <SelectItem value="SELL">Sell only</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-            <div style={{ ...cardStyle, marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: 16 }}>Controls</h2>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-medium">Min $ filter</div>
+                      <div className="text-xs text-muted-foreground">Only announce trades above your threshold.</div>
+                    </div>
+                    <Switch checked={minFilterEnabled} onCheckedChange={setMinFilterEnabled} />
+                  </div>
 
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
-                <button
-                  onClick={enableNotifications}
-                  style={{
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#eaf0f6",
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    borderRadius: 10,
-                    padding: "10px 12px",
-                    cursor: "pointer",
-                  }}
-                >
-                  Enable Notifications
-                </button>
-
-                {!running ? (
-                  <button
-                    onClick={start}
-                    style={{
-                      background: "rgba(62,226,129,0.18)",
-                      color: "#eaf0f6",
-                      border: "1px solid rgba(62,226,129,0.35)",
-                      borderRadius: 10,
-                      padding: "10px 12px",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                    }}
-                  >
-                    Start Tracking
-                  </button>
-                ) : (
-                  <button
-                    onClick={stop}
-                    style={{
-                      background: "rgba(255,90,106,0.16)",
-                      color: "#eaf0f6",
-                      border: "1px solid rgba(255,90,106,0.35)",
-                      borderRadius: 10,
-                      padding: "10px 12px",
-                      cursor: "pointer",
-                      fontWeight: 800,
-                    }}
-                  >
-                    Stop
-                  </button>
-                )}
-
-                <button
-                  onClick={loadWallets}
-                  style={{
-                    background: "rgba(255,255,255,0.08)",
-                    color: "#eaf0f6",
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    borderRadius: 10,
-                    padding: "10px 12px",
-                    cursor: "pointer",
-                  }}
-                >
-                  Reload Wallet List
-                </button>
-              </div>
-
-              <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <span style={subtle}>Track</span>
-                  <select
-                    value={trackMode}
-                    onChange={(e) => setTrackMode(e.target.value as any)}
-                    disabled={running}
-                    style={{
-                      background: "rgba(255,255,255,0.06)",
-                      color: "#eaf0f6",
-                      border: "1px solid rgba(255,255,255,0.14)",
-                      borderRadius: 10,
-                      padding: "8px 10px",
-                      width: 170,
-                      cursor: running ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    <option value="BOTH">Buy + Sell</option>
-                    <option value="BUY">Buy only</option>
-                    <option value="SELL">Sell only</option>
-                  </select>
-                </label>
-
-                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <span style={subtle}>Min $ filter</span>
-                  <input
-                    type="checkbox"
-                    checked={minFilterEnabled}
-                    onChange={(e) => setMinFilterEnabled(e.target.checked)}
-                    style={{ transform: "scale(1.1)" }}
-                  />
-                </label>
-
-                <label style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <span style={subtle}>Minimum trade value</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={subtle}>$</span>
+                  <div className="grid gap-2">
+                    <div className="text-sm text-muted-foreground">Minimum trade value</div>
                     <input
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                       type="number"
                       min={0}
                       step={50}
                       value={minUsd}
-                      onChange={(e) => setMinUsd(Number(e.target.value))}
                       disabled={!minFilterEnabled}
-                      style={{
-                        width: 130,
-                        background: "rgba(255,255,255,0.06)",
-                        color: "#eaf0f6",
-                        border: "1px solid rgba(255,255,255,0.14)",
-                        borderRadius: 10,
-                        padding: "8px 10px",
-                      }}
+                      onChange={(e) => setMinUsd(Number(e.target.value))}
                     />
-                  </div>
-                </label>
-
-                <div style={{ ...subtle, fontSize: 12, lineHeight: 1.4 }}>
-                  Tip: Polymarket prices are usually under $1 per share, so you’ll see values like{" "}
-                  <b>62¢/share</b>. The $ value shown is an estimate: <b>shares × price</b>.
-                </div>
-              </div>
-            </div>
-
-            <div style={cardStyle}>
-              <h2 style={{ margin: 0, fontSize: 16 }}>Tracked Wallets</h2>
-              <div style={{ marginTop: 10, ...subtle, fontSize: 12 }}>
-                Loaded from your Google Sheet (Column A = name, Column B = wallet).
-              </div>
-
-              <div style={{ marginTop: 12, maxHeight: 260, overflow: "auto", paddingRight: 6 }}>
-                {wallets.length === 0 ? (
-                  <div style={subtle}>No wallets loaded yet.</div>
-                ) : (
-                  wallets.map((w) => (
-                    <div
-                      key={w.wallet}
-                      style={{
-                        padding: "10px 10px",
-                        marginBottom: 10,
-                        borderRadius: 12,
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        background: "rgba(255,255,255,0.03)",
-                      }}
-                    >
-                      <div style={{ fontWeight: 900 }}>{w.name}</div>
-                      <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, ...subtle }}>
-                        {w.wallet}
-                      </div>
+                    <div className="text-xs text-muted-foreground">
+                      Estimated as <span className="font-medium">shares × price</span>.
                     </div>
-                  ))
-                )}
-              </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {banner ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Latest</CardTitle>
+                  <CardDescription>What just happened (with your color rules).</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Badge variant={banner.side === "BUY" ? "buy" : "sell"}>
+                      {banner.side === "BUY" ? "BUY" : "SELL"}
+                    </Badge>
+                    <div className="text-sm">
+                      <span className="mr-2">{banner.side === "BUY" ? "🟢" : "🔴"}</span>
+                      <span className="font-semibold">{banner.traderName}</span> <Verb side={banner.side} />{" "}
+                      <span className="font-semibold">{fmtShares(banner.shares)}</span> @{" "}
+                      <span className="font-semibold">{fmtPricePerShare(banner.price)}</span>
+                      <span className="text-muted-foreground">/share</span> •{" "}
+                      <span className="font-semibold">{banner.marketTitle}</span>
+                      {banner.outcome ? (
+                        <>
+                          {" "}
+                          (<Outcome outcome={banner.outcome} />)
+                        </>
+                      ) : null}
+                      <span className="text-muted-foreground"> • est. {fmtUsd(banner.notional)}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Tracked wallets</CardTitle>
+                <CardDescription>From Google Sheet (A=name, B=wallet).</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="max-h-[220px] overflow-auto space-y-2 pr-1">
+                  {wallets.length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No wallets loaded yet.</div>
+                  ) : (
+                    wallets.map((w) => (
+                      <div key={w.wallet} className="rounded-lg border border-border bg-card/30 p-3">
+                        <div className="font-semibold">{w.name}</div>
+                        <div className="text-xs text-muted-foreground font-mono">{w.wallet}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="text-xs text-muted-foreground">
+              Browser note: audio can be muted if the tab is fully backgrounded. Best reliability is keeping this open
+              in a small window or installing as an app.
             </div>
           </div>
-        </div>
-
-        <div style={{ marginTop: 14, ...subtle, fontSize: 12 }}>
-          Audio note: some browsers mute background tabs. Best reliability is keeping this page visible
-          or installed as an app window.
         </div>
       </div>
     </div>
